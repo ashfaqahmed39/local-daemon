@@ -40,12 +40,22 @@ const getRequestPath = (req) => new URL(req.url, `http://${req.headers.host || '
 const commandCandidates = (command) => {
   if (command !== 'adb') return [command]
   const home = os.homedir()
+  const androidHomes = [
+    process.env.ANDROID_HOME,
+    process.env.ANDROID_SDK_ROOT,
+    path.join(home, 'Library', 'Android', 'sdk'),
+    path.join(home, 'Android', 'Sdk'),
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Android', 'Sdk') : '',
+    '/opt/android-sdk',
+  ].filter(Boolean)
+  const adbName = process.platform === 'win32' ? 'adb.exe' : 'adb'
+
   return [
     process.env.ADB_PATH,
     command,
-    path.join(home, 'Library', 'Android', 'sdk', 'platform-tools', 'adb'),
-    path.join(home, 'Android', 'Sdk', 'platform-tools', 'adb'),
-    '/opt/android-sdk/platform-tools/adb',
+    '/opt/homebrew/bin/adb',
+    '/usr/local/bin/adb',
+    ...androidHomes.map((sdkPath) => path.join(sdkPath, 'platform-tools', adbName)),
   ].filter(Boolean)
 }
 

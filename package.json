@@ -6,7 +6,11 @@
   "scripts": {
     "start": "node src/server.js",
     "helper:install:macos": "./scripts/install-macos-launch-agent.sh",
-    "helper:uninstall:macos": "./scripts/uninstall-macos-launch-agent.sh"
+    "helper:uninstall:macos": "./scripts/uninstall-macos-launch-agent.sh",
+    "helper:install:linux": "./scripts/install-linux-systemd-user.sh",
+    "helper:uninstall:linux": "./scripts/uninstall-linux-systemd-user.sh",
+    "helper:install:windows": "powershell -ExecutionPolicy Bypass -File scripts/install-windows-scheduled-task.ps1",
+    "helper:uninstall:windows": "powershell -ExecutionPolicy Bypass -File scripts/uninstall-windows-scheduled-task.ps1"
   },
   "dependencies": {
     "cors": "^2.8.5",
