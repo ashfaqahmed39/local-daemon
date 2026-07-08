@@ -11,13 +11,42 @@ const port = Number(process.env.PIXEL_PERFECT_DAEMON_PORT || 8765)
 const host = process.env.PIXEL_PERFECT_DAEMON_HOST || '0.0.0.0'
 const installedApps = new Map()
 
-const json = (res, status, body) => {
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
+const defaultAllowedOrigins = [
+  'https://pixelperfectui.io',
+  'https://www.pixelperfectui.io',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://192.168.12.35',
+  'http://192.168.12.35:5173',
+]
+const allowedOrigins = (process.env.PIXEL_PERFECT_ALLOWED_ORIGINS || defaultAllowedOrigins.join(','))
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+
+const getCorsHeaders = (req) => {
+  const origin = req.headers.origin
+  const headers = {
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
     'Access-Control-Allow-Private-Network': 'true',
+    Vary: 'Origin',
+  }
+
+  if (!origin) return { ...headers, 'Access-Control-Allow-Origin': '*' }
+  if (allowedOrigins.includes(origin)) return { ...headers, 'Access-Control-Allow-Origin': origin }
+  return headers
+}
+
+const isOriginAllowed = (req) => {
+  const origin = req.headers.origin
+  return !origin || allowedOrigins.includes(origin)
+}
+
+const json = (res, status, body) => {
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    ...res.corsHeaders,
   })
   res.end(JSON.stringify(body))
 }
@@ -325,6 +354,22 @@ const daemonHealth = async () => {
   }
 }
 
+const daemonDiagnostics = async () => {
+  const adbVersion = await toolStatus('adb', ['version'])
+  const adbDevices = await run('adb', ['devices'], { timeout: 10000, maxBuffer: 1024 * 1024 })
+  const health = await daemonHealth()
+
+  return {
+    ...health,
+    adb: {
+      available: adbVersion.available,
+      command: adbVersion.command,
+      detail: adbVersion.detail,
+      devicesOutput: adbDevices.stdout || adbDevices.stderr || '',
+    },
+  }
+}
+
 const inferAndroidPackageName = async (apkPath) => {
   const aapt = await runFirst(['aapt'], ['dump', 'badging', apkPath], { timeout: 30000 })
   if (aapt.ok) {
@@ -472,7 +517,7 @@ const handleScreenshot = async (req, res) => {
   if (platform === 'android') {
     const result = await run('adb', adbArgs(deviceId, ['exec-out', 'screencap', '-p']), { encoding: 'buffer', maxBuffer: 30 * 1024 * 1024 })
     if (!result.ok || !result.stdout?.length) return json(res, 500, { success: false, detail: result.stderr || 'Screenshot failed' })
-    res.writeHead(200, { 'Content-Type': 'image/png', 'Access-Control-Allow-Origin': '*' })
+    res.writeHead(200, { 'Content-Type': 'image/png', ...res.corsHeaders })
     return res.end(result.stdout)
   }
 
@@ -481,15 +526,18 @@ const handleScreenshot = async (req, res) => {
   if (!result.ok) return json(res, 500, { success: false, detail: result.stderr || result.stdout || 'Screenshot failed' })
   const image = await fs.readFile(targetPath)
   await fs.rm(targetPath, { force: true }).catch(() => {})
-  res.writeHead(200, { 'Content-Type': 'image/png', 'Access-Control-Allow-Origin': '*' })
+  res.writeHead(200, { 'Content-Type': 'image/png', ...res.corsHeaders })
   return res.end(image)
 }
 
 const server = http.createServer(async (req, res) => {
   const url = getRequestPath(req)
+  res.corsHeaders = getCorsHeaders(req)
+  if (!isOriginAllowed(req)) return json(res, 403, { success: false, detail: 'Origin is not allowed' })
   if (req.method === 'OPTIONS') return json(res, 204, {})
   try {
     if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, await daemonHealth())
+    if (req.method === 'GET' && url.pathname === '/diagnostics') return json(res, 200, await daemonDiagnostics())
     if (req.method === 'GET' && url.pathname === '/devices') {
       const platform = url.searchParams.get('platform')
       if (platform === 'android') {
