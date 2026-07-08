@@ -27,7 +27,7 @@ const allowedOrigins = (process.env.PIXEL_PERFECT_ALLOWED_ORIGINS || defaultAllo
 const getCorsHeaders = (req) => {
   const origin = req.headers.origin
   const headers = {
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
     'Access-Control-Allow-Private-Network': 'true',
     Vary: 'Origin',
