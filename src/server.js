@@ -117,6 +117,8 @@ const runFirst = async (commands, args, options = {}) => {
   return last
 }
 
+const outputText = (value) => Buffer.isBuffer(value) ? value.toString('utf8') : String(value || '')
+
 const toolStatus = async (command, args) => {
   const result = await run(command, args, { timeout: 5000, maxBuffer: 1024 * 1024 })
   return {
@@ -293,6 +295,12 @@ const listIosSimulators = async () => {
   } catch {
     return []
   }
+}
+
+const findIosSimulator = async (deviceId) => {
+  if (!deviceId) return null
+  const devices = await listIosSimulators()
+  return devices.find((device) => device.id === deviceId) || null
 }
 
 const inspectIosSimulators = async () => {
@@ -521,9 +529,25 @@ const handleScreenshot = async (req, res) => {
     return res.end(result.stdout)
   }
 
+  if (deviceId) {
+    const simulator = await findIosSimulator(deviceId)
+    if (!simulator) return json(res, 400, { success: false, detail: 'Selected iOS simulator is not available. Refresh devices and select a simulator again.' })
+    if (simulator.state !== 'Booted') return json(res, 400, { success: false, detail: `Selected iOS simulator is ${simulator.state}. Boot it first or select a Booted simulator.` })
+  }
+
+  const stdoutResult = await run('xcrun', ['simctl', 'io', deviceId || 'booted', 'screenshot', '--type=png', '-'], { encoding: 'buffer', maxBuffer: 30 * 1024 * 1024 })
+  if (stdoutResult.ok && stdoutResult.stdout?.length) {
+    res.writeHead(200, { 'Content-Type': 'image/png', ...res.corsHeaders })
+    return res.end(stdoutResult.stdout)
+  }
+
   const targetPath = path.join(os.tmpdir(), `pixel-perfect-${Date.now()}.png`)
   const result = await run('xcrun', ['simctl', 'io', deviceId || 'booted', 'screenshot', targetPath])
-  if (!result.ok) return json(res, 500, { success: false, detail: result.stderr || result.stdout || 'Screenshot failed' })
+  if (!result.ok) {
+    const stdoutError = outputText(stdoutResult.stderr || stdoutResult.stdout)
+    const fileError = outputText(result.stderr || result.stdout)
+    return json(res, 500, { success: false, detail: fileError || stdoutError || 'Screenshot failed' })
+  }
   const image = await fs.readFile(targetPath)
   await fs.rm(targetPath, { force: true }).catch(() => {})
   res.writeHead(200, { 'Content-Type': 'image/png', ...res.corsHeaders })
