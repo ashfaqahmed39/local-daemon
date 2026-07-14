@@ -11,6 +11,9 @@ The daemon runs on the user's machine and lets the shared frontend connect to lo
 - Android Studio emulators on this computer
 - USB-connected Android devices on this computer
 - iOS simulators on this computer, macOS only
+- Android APK install, launch, and screenshot capture
+- Android full-page scrolling screenshots using Appium UiAutomator2
+- iOS simulator `.app` bundle install, launch, and screenshot capture
 
 Do not use this helper for Docker/backend-managed System Android devices.
 
@@ -65,8 +68,11 @@ Click **Connect** in Local mode.
 For manual development or troubleshooting on any OS:
 
 ```bash
+npm run appium:install-driver
 npm start
 ```
+
+The OS helper installers run `npm install`/`npm ci` and register the pinned UiAutomator2 driver automatically. Run `npm run appium:install-driver` manually only when using `npm start` without first installing a background helper.
 
 Default daemon URL:
 
@@ -91,6 +97,40 @@ Diagnostics:
 ```bash
 curl http://127.0.0.1:8765/diagnostics
 ```
+
+The frontend uses these endpoints:
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Check helper status and detected tool paths |
+| `GET` | `/diagnostics` | Return detailed Android/iOS diagnostics |
+| `GET` | `/devices?platform=android` | List Android emulators or USB devices |
+| `GET` | `/devices?platform=ios` | List macOS iOS simulators |
+| `POST` | `/install` | Install an uploaded APK or zipped iOS simulator `.app` bundle |
+| `POST` | `/launch` | Launch the installed app by package name, bundle ID, or inferred app ID |
+| `POST` | `/screenshot` | Return a PNG screenshot from the selected device |
+
+### Screenshot Modes
+
+Normal Android or iOS viewport screenshot:
+
+```bash
+curl -X POST http://127.0.0.1:8765/screenshot \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"android","device_id":"emulator-5554"}' \
+  --output screenshot.png
+```
+
+Android full-page scrolling screenshot:
+
+```bash
+curl -X POST http://127.0.0.1:8765/screenshot \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"android","device_id":"emulator-5554","mode":"scroll"}' \
+  --output android-full-page-screenshot.png
+```
+
+Full-page capture is Android-only. It uses Appium UiAutomator2 to find the largest visible scrollable element, return it to the top, scroll to the bottom, capture each viewport, detect image overlap, and append only new content. Android status and navigation bars are retained once. Normal Android screenshots and all iOS screenshots use the existing single-viewport path.
 
 ## Using With A Shared Frontend IP
 
@@ -212,9 +252,20 @@ The task name is `PixelPerfectLocalDaemon` and it starts when the user logs in. 
 
 ## Requirements
 
-- Node.js and npm
+- Node.js `^20.19.0`, `^22.12.0`, or `>=24.0.0`, with npm `10+`
 - Android: Android SDK platform tools (`adb`)
+- Android full-page capture: Android SDK root available through `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or a standard SDK location
 - iOS simulator: macOS with Xcode command line tools (`xcrun simctl`)
+
+The daemon uses pinned production dependencies:
+
+```text
+appium 3.5.2
+appium-uiautomator2-driver 8.1.0
+sharp 0.35.3
+```
+
+The UiAutomator2 driver is installed under `~/.pixel-perfect-appium` by the helper installer. The daemon starts its own loopback-only Appium server on a free port when the first full-page capture is requested.
 
 ## ADB Detection
 
@@ -295,9 +346,34 @@ $env:ADB_PATH="$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"; npm start
 
 Android upload/install auto-detects the package name with `aapt` or `apkanalyzer` when available, so you normally do not need to type the package name after uploading an APK.
 
+## Android Full-Page Capture
+
+Full-page capture requires the target app to be open in the foreground and expose a scrollable element through Android accessibility. The helper:
+
+1. Reads the foreground package and activity without relaunching or resetting the app.
+2. Attaches Appium UiAutomator2 to the selected device.
+3. Selects the largest visible element with `scrollable="true"`.
+4. Scrolls that element to the top.
+5. Captures and scrolls until UiAutomator2 reports the bottom.
+6. Detects vertical overlap with grayscale pixel comparison.
+7. Produces one continuous PNG with a maximum height of `30000px`.
+
+Captures are serialized so concurrent requests cannot control the same emulator at the same time. A capture stops after at most 20 frames and returns an explicit error instead of a visibly corrupted image when overlap cannot be determined reliably.
+
+Limitations:
+
+- Fully custom canvas/game rendering may not expose a scrollable accessibility node.
+- DRM or secure windows may block screenshots.
+- Content that changes during capture, such as animations or continuously updating feeds, can prevent reliable overlap detection.
+- Android full-page capture is not currently available for iOS.
+
 ## Troubleshooting
 
 - If Android devices do not appear, run `adb devices` and confirm the device is listed as `device`.
+- If full-page capture says UiAutomator2 is not installed, run `npm run appium:install-driver`, then restart or reinstall the helper.
+- If full-page capture cannot find scrollable content, confirm the app is open in the foreground and that its scroll container is exposed to Android accessibility.
+- If Appium cannot find the Android SDK, set `ANDROID_HOME` or `ANDROID_SDK_ROOT` to the SDK directory containing `platform-tools`, then reinstall the helper.
+- Full-page capture logs are written to the normal helper logs. On macOS, inspect `~/Library/Logs/pixel-perfect-ui/local-daemon.err.log`.
 - If `adb devices` works in the terminal but the app says no Android devices are visible, check `curl http://127.0.0.1:8765/health` and confirm `tools.adb.command` is the same path as `which adb` or `where adb`.
 - If the helper captured no `adb` path or a stale path, uninstall and reinstall the helper for your OS, then hard refresh the frontend.
 - On Apple Silicon macOS with Homebrew, `adb` is often installed at `/opt/homebrew/bin/adb`. The daemon checks this path directly, but you can also force it with `ADB_PATH=/opt/homebrew/bin/adb npm start` when testing manually.

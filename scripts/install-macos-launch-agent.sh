@@ -45,6 +45,7 @@ if [ -f package-lock.json ]; then
 else
   npm install
 fi
+npm run appium:install-driver
 
 mkdir -p "${HOME}/Library/LaunchAgents" "${HOME}/Library/Logs/pixel-perfect-ui"
 
@@ -70,6 +71,8 @@ cat > "${PLIST_PATH}" <<PLIST
     <string>8765</string>
     <key>ADB_PATH</key>
     <string>${ADB_BIN}</string>
+    <key>PIXEL_PERFECT_APPIUM_HOME</key>
+    <string>${HOME}/.pixel-perfect-appium</string>
 ${ALLOWED_ORIGINS_XML}
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${HOME}/Library/Android/sdk/platform-tools:${HOME}/Android/Sdk/platform-tools</string>

@@ -50,6 +50,7 @@ if [ -f package-lock.json ]; then
 else
   npm install
 fi
+npm run appium:install-driver
 
 mkdir -p "${SERVICE_DIR}"
 
@@ -67,6 +68,7 @@ RestartSec=3
 Environment=PIXEL_PERFECT_DAEMON_HOST=0.0.0.0
 Environment=PIXEL_PERFECT_DAEMON_PORT=8765
 Environment=ADB_PATH=${ADB_BIN}
+Environment=PIXEL_PERFECT_APPIUM_HOME=${HOME}/.pixel-perfect-appium
 ${ALLOWED_ORIGINS_ENV}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:${HOME}/Android/Sdk/platform-tools:/opt/android-sdk/platform-tools
 

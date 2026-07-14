@@ -5,6 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import { promisify } from 'node:util'
+import { captureAndroidFullPage } from './android-scroll-capture.js'
+import { stopAppiumServer } from './appium-service.js'
 
 const execFileAsync = promisify(execFile)
 const port = Number(process.env.PIXEL_PERFECT_DAEMON_PORT || 8765)
@@ -521,13 +523,21 @@ const handleScreenshot = async (req, res) => {
   const body = await parseJson(req)
   const platform = String(body.platform || '').toLowerCase()
   const deviceId = String(body.device_id || '').trim()
+  const mode = String(body.mode || '').toLowerCase()
 
   if (platform === 'android') {
+    if (mode === 'scroll') {
+      const image = await captureAndroidFullPage({ deviceId, run, adbArgs })
+      res.writeHead(200, { 'Content-Type': 'image/png', ...res.corsHeaders })
+      return res.end(image)
+    }
     const result = await run('adb', adbArgs(deviceId, ['exec-out', 'screencap', '-p']), { encoding: 'buffer', maxBuffer: 30 * 1024 * 1024 })
     if (!result.ok || !result.stdout?.length) return json(res, 500, { success: false, detail: result.stderr || 'Screenshot failed' })
     res.writeHead(200, { 'Content-Type': 'image/png', ...res.corsHeaders })
     return res.end(result.stdout)
   }
+
+  if (mode === 'scroll') return json(res, 400, { success: false, detail: 'Scroll screenshot currently supports Android only.' })
 
   if (deviceId) {
     const simulator = await findIosSimulator(deviceId)
@@ -575,9 +585,9 @@ const server = http.createServer(async (req, res) => {
       const [android, ios] = await Promise.all([inspectAndroidDevices(), inspectIosSimulators()])
       return json(res, 200, { success: true, devices: [...android.devices, ...ios.devices], diagnostics: { android, ios } })
     }
-    if (req.method === 'POST' && url.pathname === '/install') return handleInstall(req, res)
-    if (req.method === 'POST' && url.pathname === '/launch') return handleLaunch(req, res)
-    if (req.method === 'POST' && url.pathname === '/screenshot') return handleScreenshot(req, res)
+    if (req.method === 'POST' && url.pathname === '/install') return await handleInstall(req, res)
+    if (req.method === 'POST' && url.pathname === '/launch') return await handleLaunch(req, res)
+    if (req.method === 'POST' && url.pathname === '/screenshot') return await handleScreenshot(req, res)
     return json(res, 404, { success: false, detail: 'Not found' })
   } catch (error) {
     return json(res, 500, { success: false, detail: error.message || String(error) })
@@ -586,4 +596,13 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(port, host, () => {
   console.log(`Pixel Perfect local daemon listening on http://${host}:${port}`)
+})
+
+process.once('SIGINT', () => {
+  stopAppiumServer()
+  process.exit(0)
+})
+process.once('SIGTERM', () => {
+  stopAppiumServer()
+  process.exit(0)
 })

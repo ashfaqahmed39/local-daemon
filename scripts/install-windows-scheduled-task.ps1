@@ -46,6 +46,7 @@ try {
   } else {
     npm install
   }
+  npm run appium:install-driver
 } finally {
   Pop-Location
 }
@@ -59,7 +60,7 @@ if ($env:PIXEL_PERFECT_ALLOWED_ORIGINS) {
   $EscapedAllowedOrigins = $env:PIXEL_PERFECT_ALLOWED_ORIGINS.Replace("'", "''")
   $AllowedOriginsCommand = " `$env:PIXEL_PERFECT_ALLOWED_ORIGINS = '$EscapedAllowedOrigins';"
 }
-$StartupCommand = "`$env:ADB_PATH = '$EscapedAdbBin'; `$env:PIXEL_PERFECT_DAEMON_HOST = '0.0.0.0'; `$env:PIXEL_PERFECT_DAEMON_PORT = '8765';$AllowedOriginsCommand & '$EscapedNodeBin' '$EscapedServerPath'"
+$StartupCommand = "`$env:ADB_PATH = '$EscapedAdbBin'; `$env:PIXEL_PERFECT_APPIUM_HOME = Join-Path `$env:USERPROFILE '.pixel-perfect-appium'; `$env:PIXEL_PERFECT_DAEMON_HOST = '0.0.0.0'; `$env:PIXEL_PERFECT_DAEMON_PORT = '8765';$AllowedOriginsCommand & '$EscapedNodeBin' '$EscapedServerPath'"
 $Argument = "-NoProfile -ExecutionPolicy Bypass -Command `$ErrorActionPreference = 'Stop'; $StartupCommand"
 $Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $Argument -WorkingDirectory $DaemonDir
 $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
