@@ -6,6 +6,7 @@ import path from 'node:path'
 import zlib from 'node:zlib'
 import { promisify } from 'node:util'
 import { captureAndroidFullPage } from './android-scroll-capture.js'
+import { parseAndroidBottomBarHeight, parseAndroidStatusBarHeight } from './android-system-bars.js'
 import { captureIosFullPage } from './ios-scroll-capture.js'
 import { stopAppiumServer } from './appium-service.js'
 
@@ -31,6 +32,7 @@ const getCorsHeaders = (req) => {
   const origin = req.headers.origin
   const headers = {
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Expose-Headers': 'X-Pixel-Perfect-Status-Bar-Height, X-Pixel-Perfect-Bottom-Bar-Height',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
     'Access-Control-Allow-Private-Network': 'true',
     Vary: 'Origin',
@@ -132,6 +134,18 @@ const toolStatus = async (command, args) => {
 }
 
 const adbArgs = (deviceId, args) => (deviceId ? ['-s', deviceId, ...args] : args)
+
+const detectAndroidSystemBarHeights = async (deviceId) => {
+  const result = await run('adb', adbArgs(deviceId, ['shell', 'dumpsys', 'window']), {
+    timeout: 10000,
+    maxBuffer: 8 * 1024 * 1024,
+  })
+  if (!result.ok) return { statusBarHeight: null, bottomBarHeight: null }
+  return {
+    statusBarHeight: parseAndroidStatusBarHeight(result.stdout),
+    bottomBarHeight: parseAndroidBottomBarHeight(result.stdout),
+  }
+}
 
 const extractZipEntry = async (zipPath, entryName) => {
   const data = await fs.readFile(zipPath)
@@ -296,15 +310,22 @@ const inspectAndroidDevices = async () => {
     .map(([id]) => ({ id, name: id, platform: 'android', source: 'adb' }))
 
   const enriched = await Promise.all(devices.map(async (device) => {
-    const [size, density, model] = await Promise.all([
+    const [size, density, model, systemBarHeights] = await Promise.all([
       run('adb', adbArgs(device.id, ['shell', 'wm', 'size'])),
       run('adb', adbArgs(device.id, ['shell', 'wm', 'density'])),
       getAndroidDeviceModel(device.id),
+      detectAndroidSystemBarHeights(device.id),
     ])
     const match = size.ok ? String(size.stdout).match(/(\d+)x(\d+)/) : null
     const densityMatch = density.ok ? String(density.stdout).match(/(\d+)/) : null
     const densityDpi = densityMatch ? Number(densityMatch[1]) : undefined
-    const enrichedDevice = match ? { ...device, name: model, width: Number(match[1]), height: Number(match[2]) } : { ...device, name: model }
+    const enrichedDevice = {
+      ...device,
+      name: model,
+      ...(match ? { width: Number(match[1]), height: Number(match[2]) } : {}),
+      statusBarHeight: systemBarHeights.statusBarHeight,
+      bottomBarHeight: systemBarHeights.bottomBarHeight,
+    }
     return densityDpi ? { ...enrichedDevice, densityDpi, density: densityDpi / 160 } : enrichedDevice
   }))
 
@@ -580,9 +601,19 @@ const handleScreenshot = async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'image/png', ...res.corsHeaders })
       return res.end(image)
     }
-    const result = await run('adb', adbArgs(deviceId, ['exec-out', 'screencap', '-p']), { encoding: 'buffer', maxBuffer: 30 * 1024 * 1024 })
+    const [result, systemBarHeights] = await Promise.all([
+      run('adb', adbArgs(deviceId, ['exec-out', 'screencap', '-p']), { encoding: 'buffer', maxBuffer: 30 * 1024 * 1024 }),
+      body.detect_system_bars
+        ? detectAndroidSystemBarHeights(deviceId)
+        : Promise.resolve({ statusBarHeight: null, bottomBarHeight: null }),
+    ])
     if (!result.ok || !result.stdout?.length) return json(res, 500, { success: false, detail: result.stderr || 'Screenshot failed' })
-    res.writeHead(200, { 'Content-Type': 'image/png', ...res.corsHeaders })
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      ...(systemBarHeights.statusBarHeight ? { 'X-Pixel-Perfect-Status-Bar-Height': String(systemBarHeights.statusBarHeight) } : {}),
+      ...(systemBarHeights.bottomBarHeight ? { 'X-Pixel-Perfect-Bottom-Bar-Height': String(systemBarHeights.bottomBarHeight) } : {}),
+      ...res.corsHeaders,
+    })
     return res.end(result.stdout)
   }
 
