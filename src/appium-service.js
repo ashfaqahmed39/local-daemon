@@ -59,7 +59,12 @@ export const ensureAppiumServer = async () => {
 
   startupPromise = (async () => {
     const port = await getFreePort()
-    const processRef = spawn(process.execPath, [appiumEntry, '--address', '127.0.0.1', '--port', String(port), '--log-level', 'warn'], {
+    const processRef = spawn(process.execPath, [
+      appiumEntry,
+      '--address', '127.0.0.1',
+      '--port', String(port),
+      '--log-level', 'warn',
+    ], {
       cwd: daemonDir,
       env: {
         ...process.env,

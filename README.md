@@ -13,7 +13,8 @@ The daemon runs on the user's machine and lets the shared frontend connect to lo
 - iOS simulators on this computer, macOS only
 - Android APK install, launch, and screenshot capture
 - Android full-page scrolling screenshots using Appium UiAutomator2
-- iOS simulator `.app` bundle install, launch, and screenshot capture
+- iOS simulator `.app` bundle install, launch, and normal screenshot capture for any simulator runtime available to the installed Xcode
+- iOS 18 or newer simulator full-page scrolling screenshots using Appium XCUITest
 
 Do not use this helper for Docker/backend-managed System Android devices.
 
@@ -72,7 +73,7 @@ npm run appium:install-driver
 npm start
 ```
 
-The OS helper installers run `npm install`/`npm ci` and register the pinned UiAutomator2 driver automatically. Run `npm run appium:install-driver` manually only when using `npm start` without first installing a background helper.
+The OS helper installers run `npm install`/`npm ci` and register the pinned UiAutomator2 driver automatically. On macOS they also register the pinned XCUITest driver. Run `npm run appium:install-driver` manually only when using `npm start` without first installing a background helper.
 
 Default daemon URL:
 
@@ -98,7 +99,7 @@ Diagnostics:
 curl http://127.0.0.1:8765/diagnostics
 ```
 
-The frontend uses these endpoints:
+The frontend also uses these endpoints for app capture:
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
@@ -130,7 +131,24 @@ curl -X POST http://127.0.0.1:8765/screenshot \
   --output android-full-page-screenshot.png
 ```
 
-Full-page capture is Android-only. It uses Appium UiAutomator2 to find the largest visible scrollable element, return it to the top, scroll to the bottom, capture each viewport, detect image overlap, and append only new content. Android status and navigation bars are retained once. Normal Android screenshots and all iOS screenshots use the existing single-viewport path.
+iOS simulator full-page scrolling screenshot:
+
+```bash
+curl -X POST http://127.0.0.1:8765/screenshot \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"ios","device_id":"SIMULATOR-UDID","mode":"scroll"}' \
+  --output ios-full-page-screenshot.png
+```
+
+iOS simulator compatibility:
+
+- Normal viewport capture works with any iOS simulator runtime that is installed, available, and bootable by the active Xcode version.
+- Full-page scroll capture supports iOS 18 or newer simulators. iOS 18.4 and iOS 18.5 are verified with Xcode 26.2.
+- Physical iPhones and iPads are not supported.
+
+Full-page capture uses Appium to find the largest visible scrollable element, return it to the top, scroll to the bottom, capture each viewport, detect image overlap, and append only new content. Android uses UiAutomator2 and iOS simulators use XCUITest. System bars outside the scrollable element are retained once. Normal screenshots continue to use the existing single-viewport paths.
+
+The main frontend shows copyable helper install/start commands when Local mode cannot connect.
 
 ## Using With A Shared Frontend IP
 
@@ -173,6 +191,8 @@ https://pixelperfectui.io
 https://www.pixelperfectui.io
 http://localhost:5173
 http://127.0.0.1:5173
+http://192.168.12.35
+http://192.168.12.35:5173
 ```
 
 Production still connects directly from the browser to the user's own helper at `http://127.0.0.1:8765` or `http://localhost:8765`; requests are not proxied through `https://pixelperfectui.io`.
@@ -180,7 +200,7 @@ Production still connects directly from the browser to the user's own helper at 
 If you need a custom development or staging frontend, set a comma-separated allowlist before starting or installing the helper:
 
 ```bash
-PIXEL_PERFECT_ALLOWED_ORIGINS="https://pixelperfectui.io,http://192.168.11.14:5173" npm start
+PIXEL_PERFECT_ALLOWED_ORIGINS="https://pixelperfectui.io,http://192.168.12.35,http://192.168.12.35:5173" npm start
 ```
 
 For production-only hardening, use:
@@ -256,16 +276,18 @@ The task name is `PixelPerfectLocalDaemon` and it starts when the user logs in. 
 - Android: Android SDK platform tools (`adb`)
 - Android full-page capture: Android SDK root available through `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or a standard SDK location
 - iOS simulator: macOS with Xcode command line tools (`xcrun simctl`)
+- iOS full-page capture: iOS 18 or newer on a Booted simulator, with Xcode capable of building WebDriverAgent
 
 The daemon uses pinned production dependencies:
 
 ```text
 appium 3.5.2
 appium-uiautomator2-driver 8.1.0
+appium-xcuitest-driver 11.17.6 (macOS only)
 sharp 0.35.3
 ```
 
-The UiAutomator2 driver is installed under `~/.pixel-perfect-appium` by the helper installer. The daemon starts its own loopback-only Appium server on a free port when the first full-page capture is requested.
+The Appium drivers are installed under `~/.pixel-perfect-appium` by the helper installer. The daemon starts its own loopback-only Appium server on a free port when the first full-page capture is requested.
 
 ## ADB Detection
 
@@ -365,12 +387,22 @@ Limitations:
 - Fully custom canvas/game rendering may not expose a scrollable accessibility node.
 - DRM or secure windows may block screenshots.
 - Content that changes during capture, such as animations or continuously updating feeds, can prevent reliable overlap detection.
-- Android full-page capture is not currently available for iOS.
+
+## iOS Simulator Full-Page Capture
+
+Normal iOS screenshots use `xcrun simctl` and support any simulator runtime available to the active Xcode installation. Full-page scroll capture requires iOS 18 or newer; iOS 18.4 and iOS 18.5 have been verified with Xcode 26.2.
+
+The target app must be open in the foreground on the selected Booted simulator. The helper attaches XCUITest without relaunching or terminating the app, selects the largest visible table, collection view, scroll view, or web view, and detects the top and bottom from consecutive screenshots because XCTest does not report scroll boundaries.
+
+The first iOS full-page capture may take longer while Xcode builds WebDriverAgent. Later captures reuse the build. The app must expose its scroll container through iOS accessibility; custom canvas rendering, secure content, animations, and continuously changing feeds can prevent reliable capture. Physical iPhones and iPads are not supported.
 
 ## Troubleshooting
 
 - If Android devices do not appear, run `adb devices` and confirm the device is listed as `device`.
 - If full-page capture says UiAutomator2 is not installed, run `npm run appium:install-driver`, then restart or reinstall the helper.
+- If iOS full-page capture says XCUITest is not installed, run `npm run appium:install-driver` on macOS, then restart or reinstall the helper.
+- If WebDriverAgent fails to build, open Xcode once, accept its license and component prompts, then run `xcodebuild -version` before retrying.
+- If Xcode cannot find the selected simulator destination, install an iOS Simulator runtime compatible with the active Xcode version from Xcode > Settings > Components.
 - If full-page capture cannot find scrollable content, confirm the app is open in the foreground and that its scroll container is exposed to Android accessibility.
 - If Appium cannot find the Android SDK, set `ANDROID_HOME` or `ANDROID_SDK_ROOT` to the SDK directory containing `platform-tools`, then reinstall the helper.
 - Full-page capture logs are written to the normal helper logs. On macOS, inspect `~/Library/Logs/pixel-perfect-ui/local-daemon.err.log`.

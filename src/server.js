@@ -6,6 +6,7 @@ import path from 'node:path'
 import zlib from 'node:zlib'
 import { promisify } from 'node:util'
 import { captureAndroidFullPage } from './android-scroll-capture.js'
+import { captureIosFullPage } from './ios-scroll-capture.js'
 import { stopAppiumServer } from './appium-service.js'
 
 const execFileAsync = promisify(execFile)
@@ -235,6 +236,23 @@ const isAndroidPackageInstalled = async (deviceId, packageName) => {
   return result.ok && String(result.stdout).trim().startsWith('package:')
 }
 
+const getAndroidDeviceModel = async (deviceId) => {
+  if (String(deviceId || '').startsWith('emulator-')) {
+    const avd = await run('adb', adbArgs(deviceId, ['emu', 'avd', 'name']), { timeout: 10000 })
+    if (avd.ok) {
+      const avdName = String(avd.stdout || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .find((line) => line && line.toUpperCase() !== 'OK')
+      if (avdName) return avdName.replace(/_/g, ' ')
+    }
+  }
+
+  const result = await run('adb', adbArgs(deviceId, ['shell', 'getprop', 'ro.product.model']), { timeout: 10000 })
+  const model = result.ok ? String(result.stdout || '').trim() : ''
+  return model || deviceId
+}
+
 const listAndroidDevices = async () => {
   const result = await run('adb', ['devices'])
   if (!result.ok) return []
@@ -246,9 +264,16 @@ const listAndroidDevices = async () => {
     .map(([id]) => ({ id, name: id, platform: 'android', source: 'adb' }))
 
   return Promise.all(devices.map(async (device) => {
-    const size = await run('adb', adbArgs(device.id, ['shell', 'wm', 'size']))
+    const [size, density, model] = await Promise.all([
+      run('adb', adbArgs(device.id, ['shell', 'wm', 'size'])),
+      run('adb', adbArgs(device.id, ['shell', 'wm', 'density'])),
+      getAndroidDeviceModel(device.id),
+    ])
     const match = size.ok ? String(size.stdout).match(/(\d+)x(\d+)/) : null
-    return match ? { ...device, width: Number(match[1]), height: Number(match[2]) } : device
+    const densityMatch = density.ok ? String(density.stdout).match(/(\d+)/) : null
+    const densityDpi = densityMatch ? Number(densityMatch[1]) : undefined
+    const enriched = match ? { ...device, name: model, width: Number(match[1]), height: Number(match[2]) } : { ...device, name: model }
+    return densityDpi ? { ...enriched, densityDpi, density: densityDpi / 160 } : enriched
   }))
 }
 
@@ -271,9 +296,16 @@ const inspectAndroidDevices = async () => {
     .map(([id]) => ({ id, name: id, platform: 'android', source: 'adb' }))
 
   const enriched = await Promise.all(devices.map(async (device) => {
-    const size = await run('adb', adbArgs(device.id, ['shell', 'wm', 'size']))
+    const [size, density, model] = await Promise.all([
+      run('adb', adbArgs(device.id, ['shell', 'wm', 'size'])),
+      run('adb', adbArgs(device.id, ['shell', 'wm', 'density'])),
+      getAndroidDeviceModel(device.id),
+    ])
     const match = size.ok ? String(size.stdout).match(/(\d+)x(\d+)/) : null
-    return match ? { ...device, width: Number(match[1]), height: Number(match[2]) } : device
+    const densityMatch = density.ok ? String(density.stdout).match(/(\d+)/) : null
+    const densityDpi = densityMatch ? Number(densityMatch[1]) : undefined
+    const enrichedDevice = match ? { ...device, name: model, width: Number(match[1]), height: Number(match[2]) } : { ...device, name: model }
+    return densityDpi ? { ...enrichedDevice, densityDpi, density: densityDpi / 160 } : enrichedDevice
   }))
 
   return {
@@ -303,6 +335,23 @@ const findIosSimulator = async (deviceId) => {
   if (!deviceId) return null
   const devices = await listIosSimulators()
   return devices.find((device) => device.id === deviceId) || null
+}
+
+const getIosAutomationPlatformVersion = async (deviceId) => {
+  const [runtimeResult, xcodeResult] = await Promise.all([
+    run('xcrun', ['simctl', 'getenv', deviceId, 'SIMULATOR_RUNTIME_VERSION'], { timeout: 10000 }),
+    run('xcodebuild', ['-version'], { timeout: 10000 }),
+  ])
+  const platformVersion = runtimeResult.ok ? String(runtimeResult.stdout || '').trim() : ''
+  if (!platformVersion) throw new Error('Could not determine the selected iOS simulator runtime. Restart the simulator and try again.')
+
+  const xcodeVersion = xcodeResult.ok ? String(xcodeResult.stdout || '').match(/Xcode\s+(\d+(?:\.\d+)?)/)?.[1] : ''
+  const xcodeMajor = Number.parseInt(xcodeVersion || '', 10)
+  const iosMajor = Number.parseInt(platformVersion, 10)
+  if (xcodeMajor >= 26 && iosMajor < 18) {
+    throw new Error(`The selected simulator uses iOS ${platformVersion}, which is not supported for scroll capture with Xcode ${xcodeVersion}. Boot an iOS 18 or newer simulator, refresh devices, and try again.`)
+  }
+  return platformVersion
 }
 
 const inspectIosSimulators = async () => {
@@ -537,12 +586,17 @@ const handleScreenshot = async (req, res) => {
     return res.end(result.stdout)
   }
 
-  if (mode === 'scroll') return json(res, 400, { success: false, detail: 'Scroll screenshot currently supports Android only.' })
-
   if (deviceId) {
     const simulator = await findIosSimulator(deviceId)
     if (!simulator) return json(res, 400, { success: false, detail: 'Selected iOS simulator is not available. Refresh devices and select a simulator again.' })
     if (simulator.state !== 'Booted') return json(res, 400, { success: false, detail: `Selected iOS simulator is ${simulator.state}. Boot it first or select a Booted simulator.` })
+  }
+
+  if (mode === 'scroll') {
+    const platformVersion = await getIosAutomationPlatformVersion(deviceId)
+    const image = await captureIosFullPage({ deviceId, platformVersion })
+    res.writeHead(200, { 'Content-Type': 'image/png', ...res.corsHeaders })
+    return res.end(image)
   }
 
   const stdoutResult = await run('xcrun', ['simctl', 'io', deviceId || 'booted', 'screenshot', '--type=png', '-'], { encoding: 'buffer', maxBuffer: 30 * 1024 * 1024 })

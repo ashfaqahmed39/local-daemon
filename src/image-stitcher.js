@@ -30,6 +30,7 @@ const overlapScore = (previous, next, overlap) => {
   const previousStart = (previous.height - overlap) * previous.width
   let difference = 0
   let samples = 0
+
   for (let y = 0; y < overlap; y += 2) {
     const previousRow = previousStart + y * previous.width
     const nextRow = y * next.width
@@ -38,6 +39,7 @@ const overlapScore = (previous, next, overlap) => {
       samples += 1
     }
   }
+
   return samples ? difference / samples : Number.POSITIVE_INFINITY
 }
 
@@ -46,6 +48,7 @@ const findOverlap = (previous, next, viewportHeight) => {
   const maxOverlap = Math.min(previous.height - 4, Math.floor(previous.height * MAX_OVERLAP_RATIO))
   let bestOverlap = 0
   let bestScore = Number.POSITIVE_INFINITY
+
   for (let overlap = minOverlap; overlap <= maxOverlap; overlap += 1) {
     const score = overlapScore(previous, next, overlap)
     if (score < bestScore) {
@@ -53,15 +56,21 @@ const findOverlap = (previous, next, viewportHeight) => {
       bestOverlap = overlap
     }
   }
+
   if (!bestOverlap || bestScore > MAX_MATCH_SCORE) {
     throw new Error(`Could not determine screenshot overlap reliably (score ${bestScore.toFixed(1)})`)
   }
-  return { overlap: Math.round(bestOverlap * (viewportHeight / previous.height)), score: bestScore }
+
+  return {
+    overlap: Math.round(bestOverlap * (viewportHeight / previous.height)),
+    score: bestScore,
+  }
 }
 
 export const stitchAndroidFrames = async (frames, scrollRect) => {
   if (!frames.length) throw new Error('No Android screenshots were captured')
   if (frames.length === 1) return frames[0]
+
   const firstMetadata = await sharp(frames[0]).metadata()
   const width = firstMetadata.width || 0
   const height = firstMetadata.height || 0
@@ -81,18 +90,29 @@ export const stitchAndroidFrames = async (frames, scrollRect) => {
 
   const bottomHeight = height - rect.bottom
   if (bottomHeight > 0) parts.push({ input: frames.at(-1), top: rect.bottom, height: bottomHeight })
+
   const outputHeight = parts.reduce((total, part) => total + part.height, 0)
-  if (outputHeight > MAX_OUTPUT_HEIGHT) throw new Error(`Full-page screenshot exceeds the ${MAX_OUTPUT_HEIGHT}px height limit`)
+  if (outputHeight > MAX_OUTPUT_HEIGHT) {
+    throw new Error(`Full-page screenshot exceeds the ${MAX_OUTPUT_HEIGHT}px height limit`)
+  }
 
   const prepared = []
   for (const part of parts) {
-    prepared.push(await sharp(part.input).extract({ left: 0, top: part.top, width, height: part.height }).png().toBuffer())
+    prepared.push(await sharp(part.input)
+      .extract({ left: 0, top: part.top, width, height: part.height })
+      .png()
+      .toBuffer())
   }
+
   let top = 0
   const composite = prepared.map((input, index) => {
     const placement = { input, left: 0, top }
     top += parts[index].height
     return placement
   })
-  return sharp({ create: { width, height: outputHeight, channels: 4, background: '#ffffff' } }).composite(composite).png().toBuffer()
+
+  return sharp({ create: { width, height: outputHeight, channels: 4, background: '#ffffff' } })
+    .composite(composite)
+    .png()
+    .toBuffer()
 }

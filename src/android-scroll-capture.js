@@ -3,6 +3,7 @@ import { stitchAndroidFrames } from './image-stitcher.js'
 
 const MAX_FRAMES = 20
 let captureQueue = Promise.resolve()
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const appiumRequest = async (server, method, requestPath, body) => {
@@ -25,6 +26,7 @@ const createAppiumClient = async (server, capabilities) => {
   const sessionId = session?.sessionId
   if (!sessionId) throw new Error('Appium did not return a session id')
   const sessionPath = `/session/${encodeURIComponent(sessionId)}`
+
   return {
     getCurrentPackage: () => appiumRequest(server, 'GET', `${sessionPath}/appium/device/current_package`),
     findScrollableElements: () => appiumRequest(server, 'POST', `${sessionPath}/elements`, { using: 'xpath', value: '//*[@scrollable="true"]' }),
@@ -103,6 +105,7 @@ const runAndroidFullPageCapture = async ({ deviceId, run, adbArgs }) => {
   const foreground = await getForegroundApp(deviceId, run, adbArgs)
   const appium = await ensureAppiumServer()
   let driver = null
+
   try {
     driver = await createAppiumClient(appium, {
         platformName: 'Android',
@@ -116,8 +119,12 @@ const runAndroidFullPageCapture = async ({ deviceId, run, adbArgs }) => {
         'appium:autoLaunch': false,
         'appium:newCommandTimeout': 180,
     })
+
     const activePackage = await driver.getCurrentPackage()
-    if (activePackage !== foreground.packageName) throw new Error(`Foreground app changed from ${foreground.packageName} to ${activePackage}`)
+    if (activePackage !== foreground.packageName) {
+      throw new Error(`Foreground app changed from ${foreground.packageName} to ${activePackage}`)
+    }
+
     const scrollable = await findScrollableElement(driver)
     await scrollToTop(driver, scrollable.elementId)
     await sleep(400)
@@ -133,7 +140,11 @@ const runAndroidFullPageCapture = async ({ deviceId, run, adbArgs }) => {
         break
       }
     }
-    if (!reachedBottom && frames.length >= MAX_FRAMES) throw new Error(`Android scroll capture exceeded the ${MAX_FRAMES}-frame limit`)
+
+    if (!reachedBottom && frames.length >= MAX_FRAMES) {
+      throw new Error(`Android scroll capture exceeded the ${MAX_FRAMES}-frame limit`)
+    }
+
     return stitchAndroidFrames(frames, excludeSystemBars(scrollable.rect, foreground.windowDump))
   } catch (error) {
     const message = String(error?.message || error)

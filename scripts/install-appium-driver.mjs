@@ -19,7 +19,30 @@ try {
 
 if (installed.uiautomator2?.version === '8.1.0') {
   console.log('Appium UiAutomator2 8.1.0 is already installed.')
+} else {
+  if (installed.uiautomator2) {
+    execFileSync(appiumBin, ['driver', 'uninstall', 'uiautomator2'], { cwd: daemonDir, env, stdio: 'inherit' })
+  }
+  execFileSync(appiumBin, ['driver', 'install', '--source=npm', 'appium-uiautomator2-driver@8.1.0'], {
+    cwd: daemonDir,
+    env,
+    stdio: 'inherit',
+  })
+}
+
+if (process.platform !== 'darwin') process.exit(0)
+
+if (installed.xcuitest?.version === '11.17.6') {
+  console.log('Appium XCUITest 11.17.6 is already installed.')
   process.exit(0)
 }
-if (installed.uiautomator2) execFileSync(appiumBin, ['driver', 'uninstall', 'uiautomator2'], { cwd: daemonDir, env, stdio: 'inherit' })
-execFileSync(appiumBin, ['driver', 'install', '--source=npm', 'appium-uiautomator2-driver@8.1.0'], { cwd: daemonDir, env, stdio: 'inherit' })
+
+if (installed.xcuitest) {
+  execFileSync(appiumBin, ['driver', 'uninstall', 'xcuitest'], { cwd: daemonDir, env, stdio: 'inherit' })
+}
+
+execFileSync(appiumBin, ['driver', 'install', '--source=npm', 'appium-xcuitest-driver@11.17.6'], {
+  cwd: daemonDir,
+  env,
+  stdio: 'inherit',
+})
